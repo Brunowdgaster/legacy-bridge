@@ -1,0 +1,44 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  migracao:
+    name: migracao (COBOL, C#, VB.NET)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: GnuCOBOL
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq gnucobol
+          # Falha ALTO se nao instalou: sem o COBOL nao ha especificacao
+          # contra a qual comparar, e a suite inteira perde o sentido.
+          cobc --version | head -1
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: a suite, em modo exigente
+        # P13_EXIGE=1 transforma "pulado" em FALHA: no CI, uma implementacao
+        # ausente significa que a equivalencia nao foi provada.
+        env:
+          P13_EXIGE: '1'
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+        run: ./verifica.sh
+
+      - name: os dados gerados estao em dia
+        # dados/contas.dat e COMMITADO, porque e a entrada do lote e precisa
+        # ser legivel por quem le o FORMATO.md. Se o gerador mudar e o arquivo
+        # nao for regerado, o repositorio mostra uma coisa e verifica outra.
+        run: |
+          python3 dados/gera.py
+          git diff --exit-code -- dados/ \
+            || { echo 'dados/contas.dat desatualizado: rode dados/gera.py'; exit 1; }
