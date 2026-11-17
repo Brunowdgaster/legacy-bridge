@@ -8,7 +8,7 @@ on:
 
 jobs:
   migracao:
-    name: migracao (COBOL, C#, VB.NET)
+    name: migracao (COBOL, C#, VB.NET, Object Pascal)
     runs-on: ubuntu-latest
 
     steps:
@@ -25,6 +25,14 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
+
+      - name: Free Pascal (o cliente desktop)
+        run: |
+          sudo apt-get install -y -qq fp-compiler
+          # Falha ALTO se nao instalou: a suite em modo exigente trata
+          # ausencia como defeito do ambiente, e e melhor falhar aqui com o
+          # nome do pacote do que la com "fpc ausente".
+          fpc -iV
 
       - name: a suite, em modo exigente
         # P13_EXIGE=1 transforma "pulado" em FALHA: no CI, uma implementacao

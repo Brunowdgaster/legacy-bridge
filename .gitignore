@@ -4,3 +4,7 @@ cobol/juros
 **/obj/
 __pycache__/
 *.py[cod]
+pascal/bin_juros
+pascal/bin_sonda
+pascal/*.o
+pascal/*.ppu

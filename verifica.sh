@@ -184,6 +184,134 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+secao 'pascal/ — o cliente desktop, e o mesmo par de tipos'
+
+if ! tem fpc; then
+    pula 'fpc ausente: sudo apt-get install fp-compiler'
+elif [ ! -s saida/cobol.dat ]; then
+    pula 'sem o relatório do COBOL não há o que comparar'
+else
+    # `-Sewn`: aviso vira erro, mesma politica do C# e do VB.NET.
+    saida_pas=$(fpc -O2 -Mobjfpc -Sewn -vw -obin_juros pascal/juros.pas 2>&1 \
+        | grep -E 'Warning|Error|Fatal')
+
+    if [ -z "$saida_pas" ] && [ -x pascal/bin_juros ]; then
+        passa 'o Object Pascal compila com aviso tratado como erro'
+    else
+        falha 'o Object Pascal não compila limpo'
+        printf '%s\n' "$saida_pas" | head -4 | sed 's/^/        /'
+    fi
+
+    if [ -x pascal/bin_juros ]; then
+        ./pascal/bin_juros dados/contas.dat saida/pascal.dat >/dev/null 2>&1
+        if cmp -s saida/cobol.dat saida/pascal.dat; then
+            passa 'Object Pascal com Currency: IDÊNTICO ao COBOL, byte a byte'
+        else
+            falha 'Object Pascal divergiu do COBOL'
+            diff saida/cobol.dat saida/pascal.dat | head -6 | sed 's/^/        /'
+        fi
+
+        ./pascal/bin_juros --double dados/contas.dat saida/pascal_double.dat \
+            >/dev/null 2>&1
+        if cmp -s saida/cobol.dat saida/pascal_double.dat; then
+            falha 'Object Pascal com Double NÃO divergiu'
+        else
+            n=$(diff saida/cobol.dat saida/pascal_double.dat | grep -c '^<')
+            passa "Object Pascal com Double diverge em $n registro(s)"
+        fi
+
+        # A CONFIRMACAO CRUZADA que fecha a tese do projeto.
+        #
+        # Se o erro fosse da linguagem, dois `double` de linguagens diferentes
+        # errariam de formas diferentes. Eles erram IDENTICAMENTE -- o defeito
+        # e do TIPO, e nao de quem o usa.
+        if [ -s saida/double.dat ] && [ -s saida/pascal_double.dat ]; then
+            if cmp -s saida/double.dat saida/pascal_double.dat; then
+                passa 'o Double do Pascal e o do C# erram IDENTICAMENTE: é o tipo'
+            else
+                falha 'os dois Double divergem entre si: o erro não é só do tipo'
+                diff saida/double.dat saida/pascal_double.dat | head -4 \
+                    | sed 's/^/        /'
+            fi
+        fi
+    fi
+
+    # Os divisores do caminho Double precisam ter TIPO DECLARADO.
+    #
+    # Com literal, o FPC avalia `Integer / 10000.0` em precisao SIMPLES -- erro
+    # relativo de 4,7e-08, cinco ordens pior que Double. E a primeira versao
+    # deste programa concordava com o COBOL POR ACIDENTE por causa disso: o
+    # erro de precisao empurrou o valor para o outro lado do meio centavo, e
+    # dois defeitos se cancelaram.
+    #
+    # Medido por `pascal/sonda_precisao.pas`, que fica no repositorio.
+    # A verificacao distingue CODIGO de COMENTARIO, e a primeira versao nao
+    # distinguia: ela usava `grep -qE 'Taxa / 10000\.0'` e FALHOU, porque o
+    # proprio comentario do juros.pas cita essa expressao para explicar por
+    # que nao a usa.
+    #
+    # Foi a QUARTA vez que esse padrao apareceu nesta sessao -- antes com
+    # `Option VBASupport` no p12, com `methodsFor:` no p14, e com o separador
+    # de chunk tambem no p14. Um teste sobre CODIGO precisa saber onde o
+    # codigo termina, e grep nao sabe.
+    if python3 - <<'PY'
+import io
+import sys
+
+texto = io.open('pascal/juros.pas', encoding='utf-8').read()
+
+# Remove comentarios de chave e de barra-barra, rastreando o estado.
+fora = []
+dentro = False
+i = 0
+while i < len(texto):
+    if dentro:
+        if texto[i] == '}':
+            dentro = False
+        i += 1
+        continue
+    if texto[i] == '{':
+        dentro = True
+        i += 1
+        continue
+    if texto.startswith('//', i):
+        fim = texto.find('\n', i)
+        i = len(texto) if fim < 0 else fim
+        continue
+    fora.append(texto[i])
+    i += 1
+
+codigo = ''.join(fora)
+
+problemas = []
+if 'DIVISOR_TAXA: Double' not in codigo:
+    problemas.append('a constante DIVISOR_TAXA com tipo Double nao esta no codigo')
+if 'Taxa / 10000.0' in codigo:
+    problemas.append('divisor LITERAL no codigo: o FPC avalia em Single')
+
+for p in problemas:
+    print('        ' + p, file=sys.stderr)
+
+sys.exit(1 if problemas else 0)
+PY
+    then
+        passa 'os divisores têm tipo Double declarado (com literal o FPC usa Single)'
+    else
+        falha 'o caminho Double voltou a usar divisor literal'
+    fi
+
+    # E a sonda que mediu isso tem de continuar rodando: ela e a evidencia da
+    # afirmacao acima, e uma evidencia que nao executa envelhece em silencio.
+    if fpc -O2 -Mobjfpc -obin_sonda pascal/sonda_precisao.pas >/dev/null 2>&1 \
+       && ./pascal/bin_sonda 2>/dev/null \
+            | grep -q 'NAO foi avaliada em Double'; then
+        passa 'a sonda confirma: literal real é avaliado em Single pelo FPC'
+    else
+        falha 'a sonda de precisão não reproduz o achado'
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 secao 'as decisões que a regra fixou'
 
 # Cada uma destas confere um CASO DE BORDA no relatorio, e nao a media. Sao os

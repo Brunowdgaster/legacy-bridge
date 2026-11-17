@@ -3,22 +3,32 @@
 Um lote bancário em **COBOL**, com arquivos de largura fixa, migrado para
 **C#** e **VB.NET** — e a equivalência provada por `cmp`, não por confiança.
 
-> **Status:** 3 das 9 linguagens previstas, com **16 verificações**. COBOL, C#
-> e VB.NET estão completos e produzem o **mesmo arquivo, byte a byte**. Ver
-> [Roadmap](#roadmap).
+> **Status:** 4 das 9 linguagens previstas, com **22 verificações**. COBOL,
+> C#, VB.NET e Object Pascal estão completos e produzem o **mesmo arquivo,
+> byte a byte**. Ver [Roadmap](#roadmap).
 
 ## A prova, em uma linha
 
 ```
   ok    C# com decimal: IDÊNTICO ao COBOL, byte a byte
   ok    VB.NET: IDÊNTICO ao COBOL, byte a byte
+  ok    Object Pascal com Currency: IDÊNTICO ao COBOL, byte a byte
   ok    C# com double diverge em 2 registro(s), como previsto
+  ok    o Double do Pascal e o do C# erram IDENTICAMENTE: é o tipo
         < 00000013+000000140000+00000000400000000+000000140004
         > 00000013+000000140000+00000000300000000+000000140003
 ```
 
-Três implementações da mesma regra sobre 14 contas. Duas são idênticas ao
-original. A terceira troca **um único tipo** e perde um centavo.
+Quatro implementações da mesma regra sobre 14 contas, em linguagens de **três
+épocas** — COBOL de 1959, Object Pascal de 1986, C# e VB.NET de 2000. Todas
+idênticas ao original.
+
+E duas delas, com **um único tipo trocado**, perdem um centavo — e perdem
+**exatamente o mesmo centavo**, byte a byte entre si.
+
+> Se o erro fosse da linguagem, dois `double` de linguagens diferentes
+> errariam de formas diferentes. Eles erram identicamente: **o defeito é do
+> tipo, não de quem o usa.**
 
 ## Por que `cmp`, e não tolerância
 
@@ -140,6 +150,63 @@ erro aponta para isso.
 A lição é a de sempre neste portfólio: a terceira tentativa foi a que parou de
 supor e mediu.
 
+## Object Pascal, e o bug que escondia o bug
+
+O Object Pascal entra como o **cliente desktop** que acompanha o lote — o
+arranjo é tão comum que virou arquétipo: processamento noturno em COBOL no
+mainframe, e o atendente num aplicativo Delphi lendo os mesmos arquivos.
+Quando o COBOL é migrado, o cliente tem de continuar concordando.
+
+E ele tem o **mesmo par de tipos** que o C#, com nomes ainda mais explícitos:
+
+| | para dinheiro | binário |
+|---|---|---|
+| **C#** | `decimal` (128 bits) | `double` |
+| **Object Pascal** | `Currency` (Int64 escalado por 10 000, 4 casas) | `Double` |
+
+`Currency` bate byte a byte com o COBOL. `Double` perde o centavo. Igual.
+
+### Mas o `--double` do Pascal concordava com o COBOL, e por acidente
+
+A primeira versão passou no teste errado: ela **não divergia**. Em vez de
+aceitar, uma sonda mediu o porquê — e o achado é melhor que a demonstração
+original.
+
+`pascal/sonda_precisao.pas` imprime a mesma fração em três formas:
+
+```
+a fracao taxa/10000, em tres formas:
+  constante literal : 0.00030000001424923539
+  variavel Double   : 0.00029999999999999997
+  variavel Single   : 0.00030000001424923539
+```
+
+**O FPC avalia `Integer / <literal real>` em precisão simples**, não em
+`Double`. O erro relativo é `4,7e-08` — **cinco ordens de grandeza pior** que
+o `1,1e-16` do `Double`.
+
+E a consequência:
+
+```
+os juros, e o centavo que cada um grava:
+  com constante literal: 0.03500000166241079600  -> 4
+  com variavel Double  : 0.03499999999999999600  -> 3
+```
+
+O erro de precisão empurrou o valor para o **outro lado** do meio centavo, e
+o programa gravava o centavo certo por um motivo errado.
+
+> **Dois defeitos que se cancelam é o pior caso de correção que existe:** o
+> teste passa, a demonstração parece funcionar, e o programa está errado por
+> dois motivos ao mesmo tempo.
+
+A correção são três constantes com tipo declarado (`DIVISOR_TAXA: Double =
+10000.0`), e a suíte tem dois testes para isso: um que exige as constantes
+tipadas no **código** — distinguindo código de comentário, porque o
+comentário cita a forma errada para explicá-la — e um que **roda a sonda** e
+exige que ela ainda reproduza o achado. Evidência que não executa envelhece
+em silêncio.
+
 ## Os casos de borda, e por que cada um existe
 
 | conta | o que ela fixa |
@@ -194,7 +261,7 @@ A suíte **pula** o que não está instalado, e `P13_EXIGE=1` transforma todo
 | **COBOL** | o sistema original, e a especificação executável | ✅ feito |
 | **C#** | o destino da migração, com `decimal` — e a armadilha do `double` ao lado | ✅ feito |
 | **VB.NET** | a ponte que as empresas de fato usaram | ✅ feito |
-| **Object Pascal** | o cliente desktop legado (Free Pascal já instalado) | a fazer |
+| **Object Pascal** | o cliente desktop, e o mesmo par `Currency`/`Double` | ✅ feito |
 | **SQL** | a mesma regra como consulta, para relatório | a fazer |
 | **PL/I** | o outro dialeto de mainframe — Iron Spring, gratuito para Linux | a fazer |
 | **RPG** | IBM i, via PUB400.com (sistema público e gratuito) | a fazer — exige conta |
