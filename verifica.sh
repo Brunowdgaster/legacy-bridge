@@ -350,6 +350,73 @@ if [ -s saida/cobol.dat ]; then
     fi
 fi
 
+# ---------------------------------------------------------------------------
+secao 'sql/ — NUMERIC exato, e o motor que não o tem'
+
+if ! tem psql; then
+    pula 'psql ausente: a implementação em SQL precisa do PostgreSQL'
+    pula 'sql/juros.sql contra o COBOL'
+elif ! sudo -n -u postgres psql -X -c 'SELECT 1' >/dev/null 2>&1; then
+    pula 'PostgreSQL não responde (ou sem sudo sem senha)'
+    pula 'sql/juros.sql contra o COBOL'
+else
+    # O retorno capturado ANTES de qualquer cano: medir `$?` depois de um
+    # `| grep` mede o grep. Esse erro já apareceu três vezes neste portfólio.
+    saida=$(bash sql/roda.sh postgres saida/sql.dat 2>&1); ret=$?
+
+    if [ $ret -ne 0 ]; then
+        falha "o runner do SQL falhou (retorno $ret)"
+        printf '%s\n' "$saida" | sed 's/^/        /' | tail -4
+    elif cmp -s saida/cobol.dat saida/sql.dat; then
+        passa 'o SQL com NUMERIC dá a MESMA saída do COBOL, byte a byte'
+    else
+        falha 'o SQL divergiu do COBOL'
+        diff saida/cobol.dat saida/sql.dat | head -6 | sed 's/^/        /'
+    fi
+
+    # A divergência do SQLite é ASSERÇÃO DE PREVISÃO, não tolerância.
+    #
+    # O `juros.sql` afirma, no cabeçalho, que o SQLite erra -- e por um motivo
+    # específico: `NUMERIC` ali é AFINIDADE, não tipo, e `CAST('120' AS
+    # NUMERIC)` vira `integer`, de forma que `120 / 100` trunca para `1` e
+    # `1250 / 10000` dá `0`.
+    #
+    # Se um dia o SQLite passar a bater, essa afirmação ficou obsoleta e o
+    # README está mentindo. Então o teste falha -- é o mesmo desenho do
+    # `--double` do C# e do Pascal neste projeto.
+    if ! tem sqlite3; then
+        pula 'sqlite3 ausente: a divergência prevista não pode ser medida'
+    else
+        saida=$(bash sql/roda.sh sqlite saida/sql_real.dat 2>&1); ret=$?
+        if [ $ret -ne 0 ]; then
+            falha "o runner do SQLite falhou (retorno $ret)"
+            printf '%s\n' "$saida" | sed 's/^/        /' | tail -4
+        else
+            # A contagem de linhas é conferida ANTES da comparação.
+            #
+            # Isto existe porque a primeira versão da carga do SQLite punha o
+            # arquivo INTEIRO numa linha, silenciosamente: a saída tinha UMA
+            # conta, o `diff` dizia "13 de 14 divergiram", e eu quase
+            # registrei uma falha de carga como divergência numérica.
+            n_sqlite=$(wc -l < saida/sql_real.dat)
+            n_cobol=$(wc -l < saida/cobol.dat)
+            if [ "$n_sqlite" != "$n_cobol" ]; then
+                falha "o SQLite produziu $n_sqlite contas, o COBOL $n_cobol -- é falha de CARGA, não divergência numérica"
+            else
+                divergentes=$(diff saida/cobol.dat saida/sql_real.dat \
+                              | grep -c '^<' || true)
+                if [ "$divergentes" -ge 10 ]; then
+                    passa "o SQLite erra $divergentes das $n_cobol contas: NUMERIC ali é afinidade, e a divisão trunca"
+                elif [ "$divergentes" -eq 0 ]; then
+                    falha 'o SQLite passou a BATER: o cabeçalho de juros.sql ficou obsoleto'
+                else
+                    falha "o SQLite errou só $divergentes de $n_cobol; o arquivo afirma erro em quase todas"
+                fi
+            fi
+        fi
+    fi
+fi
+
 printf '\n%s\n' '=============================================================='
 if [ "$PULADO" -gt 0 ]; then
     printf '  %s passaram, %s falharam, %s pulado(s)\n' \

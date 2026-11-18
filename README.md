@@ -3,7 +3,7 @@
 Um lote bancário em **COBOL**, com arquivos de largura fixa, migrado para
 **C#** e **VB.NET** — e a equivalência provada por `cmp`, não por confiança.
 
-> **Status:** 4 das 9 linguagens previstas, com **22 verificações**. COBOL,
+> **Status:** 5 das 9 linguagens previstas, com **24 verificações**. COBOL,
 > C#, VB.NET e Object Pascal estão completos e produzem o **mesmo arquivo,
 > byte a byte**. Ver [Roadmap](#roadmap).
 
@@ -207,6 +207,132 @@ comentário cita a forma errada para explicá-la — e um que **roda a sonda** e
 exige que ela ainda reproduza o achado. Evidência que não executa envelhece
 em silêncio.
 
+## SQL: o mesmo arquivo, dois motores, 13 de 14 contas erradas
+
+`sql/juros.sql` é **um arquivo**, executado sem alteração em PostgreSQL e
+SQLite. O que muda é só a carga do arquivo de largura fixa, que fica no
+`sql/roda.sh` — porque carregar arquivo é a única parte que o SQL padrão nunca
+especificou.
+
+O resultado:
+
+| motor | saída |
+|---|---|
+| **PostgreSQL** | **idêntica ao COBOL, byte a byte**, nas 14 contas |
+| **SQLite** | **13 das 14 contas erradas** |
+
+### Por que o SQL acerta: `NUMERIC` é a mesma ideia do `PICTURE`
+
+O problema central deste projeto — **dinheiro não é ponto flutuante** — tem no
+SQL a resposta mais antiga de todas as linguagens aqui:
+
+| | resolveu em |
+|---|---|
+| COBOL, `PICTURE 9(10)V99` | 1959 |
+| SQL, `NUMERIC(p, s)` | 1992 (SQL-92) |
+| C#, `decimal` | 2002 |
+
+As três são a mesma coisa: ponto fixo decimal, exato. E o `ROUND` do
+PostgreSQL sobre `NUMERIC` arredonda **meio para longe de zero** — que é
+exatamente o `ROUNDED` do COBOL, **por omissão**. O C# precisou de
+`MidpointRounding.AwayFromZero` explícito; o PostgreSQL acerta sem pedir.
+
+### Por que o SQLite erra, e não é o que eu previ
+
+Eu havia escrito no arquivo que o SQLite "trata o valor como `REAL`, ou seja
+`double`". **Medido, é pior:**
+
+```
+sqlite> SELECT typeof(CAST('000000000120' AS NUMERIC));
+integer
+sqlite> SELECT CAST('000000000120' AS NUMERIC) / 100;
+1
+sqlite> SELECT CAST('1250' AS NUMERIC) / 10000;
+0
+```
+
+O SQLite tem **afinidade** de tipo, não tipo. `NUMERIC` converte a string para
+`integer` quando ela parece um inteiro — e `integer / integer` **trunca**.
+Então `120 / 100` é `1` em vez de `1,20`, e `1250 / 10000` é **zero**: todos
+os juros do lote saem nulos.
+
+A mesma coluna chega a guardar tipos diferentes conforme o valor:
+
+```sql
+CREATE TABLE t (v NUMERIC(12,2));
+INSERT INTO t VALUES (1.20), (120);
+-- v=1.2  typeof=real   |   v=120  typeof=integer
+```
+
+E nada avisa em nenhum desses passos.
+
+### A "correção óbvia" troca um erro catastrófico por um silencioso
+
+A reação natural é trocar `/ 100` por `/ 100.0`. Medi, numa sonda com as 15
+divisões do arquivo trocadas:
+
+| divisão | contas erradas |
+|---|---|
+| `/ 100` (inteira) | **13 de 14** |
+| `/ 100.0` (real) | **2 de 14** |
+
+E as duas que sobram são **as contas 13 e 14**, que existem neste conjunto
+justamente para testar arredondamento:
+
+| | conta 13 | conta 14 |
+|---|---|---|
+| cálculo | 1400,00 × 0,03 % ÷ 12 | 840,00 × 0,05 % ÷ 12 |
+| resultado exato | **0,035** | **0,035** |
+| COBOL (`ROUNDED`) | 0,04 | 0,04 |
+| SQLite, divisão real | **0,03** | **0,03** |
+
+`0,035` **não é representável em binário**. O `double` mais próximo fica
+*abaixo* do empate — então a pergunta "meio para cima ou meio para o par?"
+nunca chega a ser feita: o valor simplesmente não está no meio.
+
+> É o projeto inteiro em duas contas: o erro que se vê — 13 de 14 — se corrige
+> num minuto. O que fica — 2 de 14 — só aparece quando alguém confere centavo
+> por centavo.
+
+A suíte **exige** a divergência: se o SQLite passar a bater, a afirmação acima
+ficou obsoleta e o teste falha. É o mesmo desenho do `--double` do C# e do
+Pascal.
+
+### E o conselho que eu mesmo escrevi era a causa do bug
+
+O comentário original do `juros.sql` dizia:
+
+> *"a divisão precisa ser `/ 100` sobre NUMERIC, nunca `/ 100.0`, porque
+> dividir por inteiro mantém o tipo."*
+
+Está **certo no PostgreSQL** e é **exatamente o que quebra no SQLite**, onde
+"manter o tipo" significa manter `integer`. O arquivo ficou com `/ 100` de
+propósito — o PostgreSQL é o alvo da migração e a divergência é o conteúdo —
+mas a frase foi corrigida para dizer isso.
+
+### Dois defeitos meus no caminho, e por que estão escritos
+
+**A carga do SQLite punha o arquivo inteiro numa linha.** `.import` com
+`.mode ascii` usa 0x1F e 0x1E como separadores, e o arquivo não tem nenhum dos
+dois — então os 1378 caracteres entraram como um único registro. O `SUBSTR`
+pegou os 26 primeiros, a conta 1 foi calculada, e a saída teve **uma** linha
+em vez de catorze, com números plausíveis.
+
+O `diff` contra o COBOL diria *"13 de 14 divergiram"*, e eu teria registrado
+uma falha de carga como divergência numérica. Agora o runner **confere a
+contagem** antes de comparar, e a suíte falha com mensagem própria se os
+arquivos tiverem tamanhos diferentes.
+
+**E `LPAD` não existe no SQLite.** A primeira versão do arquivo usava `LPAD(x,
+12, '0')` afirmando que ele "existe nos dois motores" — não existe, é extensão
+de PostgreSQL e Oracle. A alternativa óbvia (`SUBSTR(s, -12)`) também não
+serve: o SQLite conta do fim com índice negativo e o **PostgreSQL não**.
+
+A forma portátil é a verbosa: concatenar zeros e recortar com `SUBSTR` e
+`LENGTH`. É o arquivo demonstrando o próprio assunto — **o SQL que roda em
+dois motores é bem menor do que parece, e a parte que não roda só aparece
+quando se testa nos dois.**
+
 ## Os casos de borda, e por que cada um existe
 
 | conta | o que ela fixa |
@@ -262,7 +388,7 @@ A suíte **pula** o que não está instalado, e `P13_EXIGE=1` transforma todo
 | **C#** | o destino da migração, com `decimal` — e a armadilha do `double` ao lado | ✅ feito |
 | **VB.NET** | a ponte que as empresas de fato usaram | ✅ feito |
 | **Object Pascal** | o cliente desktop, e o mesmo par `Currency`/`Double` | ✅ feito |
-| **SQL** | a mesma regra como consulta, para relatório | a fazer |
+| **SQL** | que o mesmo arquivo em dois motores dá **13 de 14 contas erradas** num deles | ✅ feito |
 | **PL/I** | o outro dialeto de mainframe — Iron Spring, gratuito para Linux | a fazer |
 | **RPG** | IBM i, via PUB400.com (sistema público e gratuito) | a fazer — exige conta |
 | **ABAP** | SAP, via BTP Trial | a fazer — conta de 90 dias |
