@@ -8,7 +8,7 @@ on:
 
 jobs:
   migracao:
-    name: migracao (COBOL, C#, VB.NET, Object Pascal)
+    name: migracao (COBOL, C#, VB.NET, Object Pascal, SQL)
     runs-on: ubuntu-latest
 
     steps:
@@ -33,6 +33,28 @@ jobs:
           # ausencia como defeito do ambiente, e e melhor falhar aqui com o
           # nome do pacote do que la com "fpc ausente".
           fpc -iV
+
+      - name: PostgreSQL e SQLite (a implementacao em SQL)
+        # O PostgreSQL e o alvo: `NUMERIC` exato, e `ROUND` meio para longe de
+        # zero POR OMISSAO -- igual ao `ROUNDED` do COBOL.
+        #
+        # O SQLite entra para a DIVERGENCIA PREVISTA: la `NUMERIC` e afinidade
+        # e nao tipo, `CAST('120' AS NUMERIC)` vira integer, e a divisao
+        # trunca. A suite EXIGE que ele erre; se passar a bater, o README
+        # ficou obsoleto e o teste falha.
+        #
+        # Sem este passo, o P13_EXIGE=1 transformava os dois pulados em falha
+        # -- que foi exatamente o que aconteceu, e e o comportamento certo: a
+        # suite nao passou verde tendo verificado menos do que promete.
+        run: |
+          sudo apt-get install -y -qq postgresql postgresql-client sqlite3
+          sudo service postgresql start
+          for _ in $(seq 1 30); do
+            sudo -n -u postgres psql -tAc 'SELECT 1' >/dev/null 2>&1 && break
+            sleep 1
+          done
+          sudo -n -u postgres psql -tAc 'SELECT version()'
+          sqlite3 --version
 
       - name: a suite, em modo exigente
         # P13_EXIGE=1 transforma "pulado" em FALHA: no CI, uma implementacao
