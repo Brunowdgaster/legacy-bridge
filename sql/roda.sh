@@ -79,13 +79,31 @@ postgres)
         exit 1
     fi
 
-    # E o `juros.sql` SEM ALTERAÇÃO.
+    # E o `juros.sql` SEM ALTERAÇÃO, lido por STDIN e não por `-f <arquivo>`.
+    #
+    # A diferença é de QUEM ABRE O ARQUIVO, e ela quebrou o CI:
+    #
+    #     psql: error: .../sql/juros.sql: Permission denied
+    #
+    # `sudo -u postgres psql -f arquivo` faz o psql -- já como `postgres` --
+    # abrir o arquivo. No runner do GitHub, o diretório de trabalho não é
+    # legível por outro usuário, e `postgres` não alcança. Localmente
+    # funcionava porque `/mnt/c` é montado com permissão permissiva, o que faz
+    # desta a terceira vez nesta sessão em que algo passa aqui e falha lá.
+    #
+    # `-f -` lê de STDIN, e o redirecionamento `<` é feito pelo SHELL, que roda
+    # como o usuário normal. O arquivo é aberto por quem tem permissão, e o
+    # conteúdo chega ao psql por cano.
+    #
+    # É a mesma decisão que já estava tomada para os DADOS (`\copy` do cliente
+    # em vez de `COPY` do servidor) -- eu só não a havia aplicado ao próprio
+    # arquivo SQL.
     #
     # `-t` tira cabeçalho e rodapé, `-A` tira o alinhamento por colunas. Sem
     # os dois, cada registro viria com espaços de preenchimento e o `cmp`
     # acusaria diferença em TODAS as linhas — uma falha de formatação do
     # cliente aparecendo como erro de cálculo.
-    "${PG[@]}" -d legado -t -A -f "$AQUI/juros.sql" > "$SAIDA" || exit 1
+    "${PG[@]}" -d legado -t -A -f - < "$AQUI/juros.sql" > "$SAIDA" || exit 1
     ;;
 
 sqlite)
